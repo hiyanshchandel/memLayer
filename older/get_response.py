@@ -3,7 +3,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 import os
-from older.deduplication import get_similar
+from .deduplication import get_similar
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -50,7 +50,7 @@ def get_chatbot_response(user_input: str) -> str:
 
 def get_history():
     history = []
-    for message in conversation_history.messages[-4:] :  # Get LAST 4 messages
+    for message in conversation_history.messages[-10:] :  # Get LAST 10 messages
         role = "User" if message.type == "human" else "AI"
         history.append((role, message.content))
     return history

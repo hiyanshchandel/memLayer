@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from agents import Agent, Runner
 load_dotenv()
 import json
-from upsert_to_qdrant import upsert_vector
+from .upsert_to_qdrant import upsert_vector
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = QdrantClient(

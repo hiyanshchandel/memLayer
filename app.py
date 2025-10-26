@@ -1,7 +1,7 @@
 import streamlit as st
-from get_response import get_chatbot_response, get_history
-from upsert_to_qdrant import upsert_vector, get_insights
-from deduplication import deduplication_decision, get_similar, merge_memory, check_max_similarity
+from older.get_response import get_chatbot_response, get_history
+from older.upsert_to_qdrant import upsert_vector, get_insights
+from older.deduplication import deduplication_decision, get_similar, merge_memory, check_max_similarity
 import asyncio
 from datetime import datetime
 

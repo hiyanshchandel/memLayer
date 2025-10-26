@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from embeddings import get_embedding
 from datetime import datetime
 import uuid
-from summarize import summarize_text
+from .summarize import summarize_text
 
 client = QdrantClient(
     host = "localhost",
