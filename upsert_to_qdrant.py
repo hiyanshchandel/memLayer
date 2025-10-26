@@ -12,50 +12,27 @@ client = QdrantClient(
     port = 6333,
 )
 
-def create_points(history):
+def get_insights(history) -> list:
     history = [f"{role}: {text}" for role, text in history]
-
     summarised = summarize_text(history)
-
     ai_insights = summarised.get("ai_insights", [])
     user_insights = summarised.get("user_insights", [])
-
-    if not ai_insights and not user_insights:
-        return []
-    
-    points = []
-    
-    # Add AI insights
-    for insight in ai_insights:
-        points.append(PointStruct(
-            id=str(uuid.uuid4()),
-            vector={"dense-vector": get_embedding(insight)},  
-            payload={
-                "role": "AI",
-                "text": insight,
-                "timestamp": datetime.now().isoformat()
-            }
-        ))
-    
-    # Add User insights
-    for insight in user_insights:
-        points.append(PointStruct(
-            id=str(uuid.uuid4()),
-            vector={"dense-vector": get_embedding(insight)},  
-            payload={
-                "role": "User",
-                "text": insight,
-                "timestamp": datetime.now().isoformat()
-            }
-        ))
-    
-    return points
+    print(f"Extracted {len(ai_insights)} AI insights and {len(user_insights)} User insights.")
+    return [ai_insights, user_insights]
 
 
-def upsert_vector_batch(collection_name: str, history):
-    points = create_points(history[-4:])
-    if not points:
-        print("No points to upsert.")
-        return
-    
-    client.upsert(collection_name=collection_name, points=points)
+def upsert_vector(collection_name: str, role: str, text: str, point_id: str = None):
+    """Upsert a vector into Qdrant."""
+    if point_id is None:
+        point_id = str(uuid.uuid4())
+
+    point = PointStruct(
+        id=point_id,
+        vector={"dense-vector": get_embedding(text)},  
+        payload={
+            "role": role,
+            "text": text,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+    client.upsert(collection_name=collection_name, points=[point])

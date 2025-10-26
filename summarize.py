@@ -14,30 +14,27 @@ def summarize_text(texts: list[str]) -> dict:  # Changed return type to dict
     # Join list of texts into a single string
     combined_text = "\n".join(texts) if isinstance(texts, list) else texts
     
-    system_prompt = """You are a memory extraction system. Your job is to analyze conversation messages and extract only the most valuable, memorable insights.
-
-Rules:
-1. Extract ONLY information worth remembering long-term (facts, preferences, important context, key decisions)
-2. Ignore small talk, greetings, acknowledgments, and transactional messages
-3. Separate insights by who they're about: AI behavior/responses vs User preferences/information
-4. Group related information into concise points
-5. If multiple topics are discussed, create separate points for each
-6. If nothing is worth remembering, return empty lists
-7. Each point should be clear, specific, and self-contained
-
+    system_prompt = """You are a memory extraction system. Your task is to analyze conversation messages and extract only the most valuable and memorable insights.
+Guidelines:
+1. Extract ONLY information worth remembering long-term (such as facts, preferences, important context, or key decisions).
+2. Disregard small talk, greetings, acknowledgments, and transactional messages.
+3. Clearly separate insights based on whom they pertain to: AI behavior/responses or User preferences/information.
+4. Consolidate related information into concise, well-structured points.
+5. If multiple topics are discussed, create distinct points for each.
+6. If there are no noteworthy insights, return empty lists.
+7. Each point must be clear, specific, and self-contained to ensure usefulness later.
 Output Format (JSON):
 {
-  "ai_insights": [
-    "AI provided code examples for Python functions",
-    "AI suggested using embeddings for semantic search"
-  ],
-  "user_insights": [
-    "User prefers concise explanations over verbose ones",
-    "User is building a memory layer for chatbots"
-  ]
+"ai_insights": [
+"AI provided code examples for Python functions",
+"AI suggested using embeddings for semantic search"
+],
+"user_insights": [
+"User prefers concise explanations over verbose ones",
+"User is building a memory layer for chatbots"
+]
 }
-
-If nothing is memorable, return: {"ai_insights": [], "user_insights": []}"""
+If no memorable information is present, return: {"ai_insights": [], "user_insights": []}"""
     
     response = client.chat.completions.create(
         model=os.getenv("OPENAI_MODEL"),
@@ -48,5 +45,5 @@ If nothing is memorable, return: {"ai_insights": [], "user_insights": []}"""
         temperature=0.3,
         response_format={"type": "json_object"}
     )
-    
+    print(f"Response from OpenAI: {response.choices[0].message.content}")
     return json.loads(response.choices[0].message.content)  # Parse JSON string to dict

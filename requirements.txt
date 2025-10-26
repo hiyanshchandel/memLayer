@@ -6,3 +6,5 @@ python-dotenv
 qdrant-client
 openai
 uuid
+openai-agents
+streamlit

@@ -3,6 +3,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 import os
+from deduplication import get_similar
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,7 +15,11 @@ llm = ChatOpenAI(
 )
 
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful AI assistant."),
+    ("system", """You are a helpful AI assistant with access to past conversation memories.
+{context}
+Use the relevant memories above (if any) to provide more personalized and contextual responses.
+If the memories are relevant to the current conversation, incorporate them naturally.
+If they're not relevant, you can ignore them and respond normally."""),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{input}")
 ])
@@ -35,15 +40,17 @@ conversation = RunnableWithMessageHistory(
 )
 
 def get_chatbot_response(user_input: str) -> str:
+    similar_memories, _, _ = get_similar(user_input, threshold=0.25)
+    context = "\n".join(similar_memories) if similar_memories else "No relevant past memories found."
     response = conversation.invoke(
-        {"input": user_input},
+        {"input": user_input, "context": context},
         config={"configurable": {"session_id": "default"}}
     )
     return response.content
 
 def get_history():
     history = []
-    for message in conversation_history.messages[:10]:
+    for message in conversation_history.messages[-4:] :  # Get LAST 4 messages
         role = "User" if message.type == "human" else "AI"
         history.append((role, message.content))
     return history
