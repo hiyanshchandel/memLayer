@@ -1,0 +1,5 @@
+get structured outputs from llm which tells if new topic has started or not for semantic chunking and might also help in entity and relation extraction
+{
+    "new topic" : true
+    "query_Respose" : 'blah blah blah'
+}

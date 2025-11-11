@@ -1,7 +1,7 @@
 from clients.vector_client import vec_client
 import sqlite3
 import json
-from memory_blob import MemoryBlob
+from memory_blob.definition import MemoryBlob
 from config import EPISODIC_MEMORY_DB, EPISODIC_COLLECTION_NAME, EPISODIC_THRESHOLD, EPISODIC_TOP_K
 
 
@@ -35,7 +35,7 @@ class EpisodicMemoryManager:
         """Insert or update memory in both SQLite and Qdrant."""
         # Store in vector DB
         point = memory.to_vector_point()
-        self.qdrant.upsert_point(collection_name=self.collection_name, point=point)
+        self.qdrant.upsert(collection_name=self.collection_name, points=[point])
 
         # Store in SQLite (UPSERT)
         self.db.execute("""
@@ -65,6 +65,27 @@ class EpisodicMemoryManager:
         ))
 
         self.conn.commit()
+    
+    def retrieve_memory(self, memory_id: str):
+        """currently does not fetch from vector DB"""
+        """Retrieve a memory by its ID."""
+        self.db.execute("SELECT * FROM memories WHERE id = ?", (memory_id,))
+        row = self.db.fetchone()
+
+        if row:
+            memory = {
+                "id": row[0],
+                "content": row[1],
+                "memory_type": row[2],
+                "created_at": row[3],
+                "last_accessed": row[4],
+                "frequency": row[5],
+                "salience": row[6],
+                "version": row[7],
+                "tags": json.loads(row[8])
+            }
+            return memory
+        return None
 
     def retrieve_similar(self, query_embedding: list[float],
                          limit: int = EPISODIC_TOP_K,
@@ -101,3 +122,6 @@ class EpisodicMemoryManager:
 
         return memories
     
+
+
+ 

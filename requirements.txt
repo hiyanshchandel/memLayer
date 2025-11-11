@@ -8,3 +8,4 @@ openai
 uuid
 openai-agents
 streamlit
+neo4j
