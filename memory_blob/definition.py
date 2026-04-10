@@ -4,9 +4,10 @@ from embeddings import get_embedding
 from qdrant_client.models import PointStruct
 
 class MemoryBlob:
+
     def __init__(self, content: str, role: str = None, memory_type: str = None, embedding: list[float] = None, id: str = None, created_at: str = None, tags: dict = None):
         self.id = id or str(uuid.uuid4())
-        self.memory_type = memory_type 
+        self.memory_type = memory_type   
         self.content = content
         self.embedding = embedding
         self.created_at = created_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -35,7 +36,7 @@ class MemoryBlob:
                 "last_accessed": self.last_accessed,
                 "salience": self.salience,
                 "version": self.version,
-                "self.role": self.role
+                "role": self.role
             },
         )
 
@@ -52,10 +53,4 @@ class MemoryBlob:
             "salience": self.salience,
             "version": self.version,
             "role": self.role
-        }
-    
-    
-
-
-
-    
+        }; 

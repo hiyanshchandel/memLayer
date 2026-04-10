@@ -18,7 +18,7 @@ class EpisodicMemoryManager:
         # Create table if not exists
         self.db.execute("""
             CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
+                id TEXT PRIMARY KEY, u
                 content TEXT,
                 memory_type TEXT,
                 created_at TEXT,
@@ -121,7 +121,3 @@ class EpisodicMemoryManager:
                 memories.append(memory)
 
         return memories
-    
-
-
- 

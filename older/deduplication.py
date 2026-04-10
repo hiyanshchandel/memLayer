@@ -5,12 +5,12 @@ from dotenv import load_dotenv
 from agents import Agent, Runner
 load_dotenv()
 import json
-from .upsert_to_qdrant import upsert_vector
+from .upsert_to_h qdrant import upsert_vector
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = QdrantClient(
-    host = "localhost",
-    port = 6333,
+    host = "localhost", 
+     port = 6333,
 )
 
 from typing import Tuple
@@ -76,7 +76,7 @@ async def deduplication_decision(new_text: str, similar_facts: list):
     {
     "action": "store" or "merge",
     "reason": "brief explanation",
-    "merges": [
+   rew "merges": [
         {
             "index": 0,
             "merged_text": "new text merged with fact at index 0"

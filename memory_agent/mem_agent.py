@@ -11,4 +11,8 @@ class MemoryAgent:
         episodic_manager.store_memory(MemoryBlob)
         graph_manager = GraphMemoryManager()
         graph_manager.push_to_graphdb(MemoryBlob)
+    
+    def retrieve_memory(self, query):
+        episodic_manager = EpisodicMemoryManager()
+        return episodic_manager.retrieve_memory(query)
         return

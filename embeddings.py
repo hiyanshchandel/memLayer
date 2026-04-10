@@ -8,4 +8,4 @@ def get_embedding(input_text):
         model=embedding_model, 
         dimensions=3072 
     )
-    return response.data[0].embedding  
+    return response.data[0].embedding

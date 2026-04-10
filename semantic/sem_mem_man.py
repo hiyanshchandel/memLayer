@@ -6,7 +6,6 @@ from config import  SEMANTIC_COLLECTION_NAME, SEMANTIC_MEMORY_DB, SEMANTIC_THRES
 from clients.graphdb_client import graphdb_client
 from clients.openai_client import openai_client
 import re
-
 class GraphMemoryManager:
     def __init__(self):
         self.client = graphdb_client
@@ -25,7 +24,10 @@ class GraphMemoryManager:
         data = json.loads(clean_json_str)
         return data
     
-    def push_to_graphdb(self, Memory = MemoryBlob):
+    def retrieve_entities_and_relationships(self, Memory = MemoryBlob):
+        embedding = Memory.create_embedding()
+        
+    def push_to_graphdb(self, Memory = MemoryBlob): 
         data = self.extract_entities_and_relationships(role = neo4j_extraction_prompt, Memory = Memory)
         entity_lookup = {e["id"]: e for e in data["entities"]}
 
