@@ -1,18 +1,386 @@
 from memory_blob.definition import MemoryBlob
 from episodic.memory_manager import EpisodicMemoryManager
 from semantic.sem_mem_man import GraphMemoryManager
+from embeddings import get_embedding
+from config import GRAPH_CONTEXT_CACHE_LIMIT, GRAPH_CONTEXT_ENTITY_LIMIT, GRAPH_PUSH_MIN_INTERVAL_SECONDS, EPISODIC_RETRIEVAL_FALLBACK_THRESHOLDS
+from queue import Queue
+import threading
+import time
+import re
 
 class MemoryAgent:
-    def __init__(self):
-        pass
+    _graph_queue = Queue()
+    _graph_worker_started = False
+    _graph_worker_lock = threading.Lock()
+    _graph_context_cache = {}
+    _graph_context_cache_lock = threading.Lock()
 
-    def store_memory(self, MemoryBlob):
+    def __init__(self):
+        self.episodic_manager = EpisodicMemoryManager()
+        self.graph_manager = GraphMemoryManager()
+        self._ensure_graph_worker()
+
+    @classmethod
+    def _ensure_graph_worker(cls):
+        with cls._graph_worker_lock:
+            if cls._graph_worker_started:
+                return
+
+            worker = threading.Thread(target=cls._graph_worker_loop, daemon=True)
+            worker.start()
+            cls._graph_worker_started = True
+
+    @classmethod
+    def _graph_worker_loop(cls):
+        last_push_started = 0.0
+
+        while True:
+            memory_blob = cls._graph_queue.get()
+            try:
+                graph_manager = GraphMemoryManager()
+                context_key = cls._graph_context_key(memory_blob)
+                known_entities = cls._select_known_entities(context_key)
+
+                elapsed_since_last = time.perf_counter() - last_push_started
+                sleep_seconds = max(0.0, GRAPH_PUSH_MIN_INTERVAL_SECONDS - elapsed_since_last)
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+
+                last_push_started = time.perf_counter()
+                graph_data = graph_manager.push_to_graphdb(memory_blob, known_entities=known_entities)
+                cls._update_graph_context(context_key, graph_data)
+            except Exception as exc:
+                print(f"[Timing] graph_push_error={exc}")
+            finally:
+                cls._graph_queue.task_done()
+
+    @classmethod
+    def _graph_context_key(cls, memory_blob):
+        tags = getattr(memory_blob, "tags", {}) or {}
+        source_name = str(tags.get("source_name", "")).strip().lower()
+        source_type = str(tags.get("source_type", "")).strip().lower()
+        memory_type = str(getattr(memory_blob, "memory_type", "") or "").strip().lower()
+
+        if source_name:
+            return f"{source_type}:{source_name}" if source_type else source_name
+
+        return source_type or memory_type or "default"
+
+    @classmethod
+    def _normalize_graph_name(cls, value):
+        return re.sub(r"[^a-z0-9]+", "", str(value).lower()) if value else ""
+
+    @classmethod
+    def _score_graph_entity(cls, record):
+        label = record.get("label", "")
+        count = record.get("count", 0)
+        relation_count = record.get("relation_count", 0)
+        label_boosts = {
+            "Person": 5,
+            "Organization": 4,
+            "Location": 4,
+            "Project": 4,
+            "Technology": 3,
+            "Concept": 2,
+            "Document": 2,
+            "Event": 2,
+            "Algorithm": 2,
+            "Attribute": 1,
+        }
+
+        return (count * 4) + (relation_count * 2) + label_boosts.get(label, 0)
+
+    @classmethod
+    def _select_known_entities(cls, context_key):
+        with cls._graph_context_cache_lock:
+            cache = cls._graph_context_cache.get(context_key, {})
+            records = list(cache.values())
+
+        records.sort(key=lambda item: (cls._score_graph_entity(item), item.get("last_seen", 0)), reverse=True)
+        shortlist = []
+        for record in records[:GRAPH_CONTEXT_ENTITY_LIMIT]:
+            shortlist.append({
+                "name": record.get("name"),
+                "label": record.get("label"),
+                "count": record.get("count", 0),
+            })
+
+        return shortlist
+
+    @classmethod
+    def _update_graph_context(cls, context_key, graph_data):
+        entities = graph_data.get("entities", []) if graph_data else []
+        relationships = graph_data.get("relationships", []) if graph_data else []
+
+        relation_counts = {}
+        for relationship in relationships:
+            relation_counts[relationship.get("start_id")] = relation_counts.get(relationship.get("start_id"), 0) + 1
+            relation_counts[relationship.get("end_id")] = relation_counts.get(relationship.get("end_id"), 0) + 1
+
+        with cls._graph_context_cache_lock:
+            cache = cls._graph_context_cache.setdefault(context_key, {})
+
+            for entity in entities:
+                entity_name = entity.get("name")
+                entity_label = entity.get("label")
+                entity_id = entity.get("id")
+                if not entity_name or not entity_label or not entity_id:
+                    continue
+
+                entity_key = cls._normalize_graph_name(entity_name)
+                if not entity_key:
+                    continue
+
+                record = cache.setdefault(entity_key, {
+                    "name": entity_name,
+                    "label": entity_label,
+                    "count": 0,
+                    "relation_count": 0,
+                    "last_seen": 0,
+                })
+
+                record["name"] = entity_name
+                record["label"] = entity_label
+                record["count"] = record.get("count", 0) + 1
+                record["relation_count"] = record.get("relation_count", 0) + relation_counts.get(entity_id, 0)
+                record["last_seen"] = time.time()
+
+            if len(cache) > GRAPH_CONTEXT_CACHE_LIMIT:
+                sorted_records = sorted(cache.items(), key=lambda item: (cls._score_graph_entity(item[1]), item[1].get("last_seen", 0)), reverse=True)
+                trimmed_cache = dict(sorted_records[:GRAPH_CONTEXT_CACHE_LIMIT])
+                cls._graph_context_cache[context_key] = trimmed_cache
+
+    def _normalize_query(self, query):
+        return " ".join(query.strip().split()).lower()
+
+    def _collect_expansion_terms(self, semantic_results):
+        expansion_terms = []
+
+        for entity in semantic_results.get("entities", []):
+            name = entity.get("name")
+            if name:
+                expansion_terms.append(name)
+
+        for relationship in semantic_results.get("relationships", []):
+            for key in ("source", "target", "related_node"):
+                value = relationship.get(key)
+                if value:
+                    expansion_terms.append(value)
+
+        unique_terms = []
+        seen_terms = set()
+        for term in expansion_terms:
+            normalized_term = self._normalize_query(term)
+            if normalized_term and normalized_term not in seen_terms:
+                seen_terms.add(normalized_term)
+                unique_terms.append(term)
+
+        return unique_terms
+
+    def store_memory(self, MemoryBlob, build_graph: bool = True):
+        total_start = time.perf_counter()
+        resolve_start = time.perf_counter()
+        episodic_result = self.episodic_manager.resolve_memory_for_storage(MemoryBlob)
+        resolve_ms = (time.perf_counter() - resolve_start) * 1000
+        print(f"[Timing] episodic_resolve_ms={resolve_ms:.1f}")
+
+        canonical_memory_blob = episodic_result.get("memory_blob", MemoryBlob) if episodic_result else MemoryBlob
+        episodic_action = episodic_result.get("action") if episodic_result else None
+
+        if episodic_action == "duplicate":
+            episodic_ms = 0.0
+            print(f"[Timing] episodic_store_ms={episodic_ms:.1f}")
+            print("[Timing] graph_push_ms=skipped_duplicate")
+            total_ms = (time.perf_counter() - total_start) * 1000
+            print(f"[Timing] store_memory_total_ms={total_ms:.1f}")
+            return episodic_result
+
+        persist_start = time.perf_counter()
+        self._persist_episodic_memory(canonical_memory_blob)
+        episodic_ms = (time.perf_counter() - persist_start) * 1000
+        print(f"[Timing] episodic_store_ms={episodic_ms:.1f}")
+
+        if build_graph:
+            self._enqueue_graph_memory(canonical_memory_blob)
+            print("[Timing] graph_push_ms=queued")
+        else:
+            print("[Timing] graph_push_ms=skipped")
+
+        total_ms = (time.perf_counter() - total_start) * 1000
+        print(f"[Timing] store_memory_total_ms={total_ms:.1f}")
+
+    def _persist_episodic_memory(self, memory_blob):
         episodic_manager = EpisodicMemoryManager()
-        episodic_manager.store_memory(MemoryBlob)
+        episodic_manager.persist_memory(memory_blob)
+
+    def _enqueue_graph_memory(self, memory_blob):
+        type(self)._graph_queue.put(memory_blob)
+
+    def _push_graph_memory(self, memory_blob):
         graph_manager = GraphMemoryManager()
-        graph_manager.push_to_graphdb(MemoryBlob)
+        graph_manager.push_to_graphdb(memory_blob)
     
-    def retrieve_memory(self, query):
-        episodic_manager = EpisodicMemoryManager()
-        return episodic_manager.retrieve_memory(query)
-        return
+    def retrieve_memory_raw(self, query, depth=0, max_queries_per_hop=5):
+        max_depth = max(0, int(depth))
+
+        accumulated_episodic = []
+        accumulated_entities = []
+        accumulated_relationships = []
+        accumulated_memory_ids = []
+        hop_results = []
+
+        seen_memory_ids = set()
+        seen_entities = set()
+        seen_relationships = set()
+        seen_queries = set()
+
+        current_queries = [query]
+        seen_queries.add(self._normalize_query(query))
+
+        for hop in range(max_depth + 1):
+            next_queries = []
+            hop_episodic = []
+            hop_entities = []
+            hop_relationships = []
+            hop_queries = list(current_queries)
+
+            for seed_query in current_queries:
+                query_embedding = get_embedding(seed_query)
+                episodic_results = []
+                used_threshold = None
+
+                for threshold in EPISODIC_RETRIEVAL_FALLBACK_THRESHOLDS:
+                    episodic_results = self.episodic_manager.retrieve_similar(
+                        query_embedding,
+                        threshold=threshold if threshold is not None else 0.0,
+                    )
+                    used_threshold = threshold
+                    if episodic_results:
+                        break
+
+                semantic_results = self.graph_manager.retrieve_entities_and_relationships(seed_query)
+
+                for memory in episodic_results:
+                    memory_id = memory.get("id")
+                    if memory_id and memory_id not in seen_memory_ids:
+                        seen_memory_ids.add(memory_id)
+                        accumulated_episodic.append(memory)
+                        hop_episodic.append(memory)
+                        accumulated_memory_ids.append(memory_id)
+
+                for entity in semantic_results.get("entities", []):
+                    entity_name = entity.get("name")
+                    entity_labels = tuple(entity.get("labels", []))
+                    entity_key = (entity_name, entity_labels)
+                    if entity_name and entity_key not in seen_entities:
+                        seen_entities.add(entity_key)
+                        accumulated_entities.append(entity)
+                        hop_entities.append(entity)
+
+                for relationship in semantic_results.get("relationships", []):
+                    relationship_key = (
+                        relationship.get("source"),
+                        relationship.get("type"),
+                        relationship.get("target"),
+                        relationship.get("related_node"),
+                    )
+                    if relationship_key not in seen_relationships:
+                        seen_relationships.add(relationship_key)
+                        accumulated_relationships.append(relationship)
+                        hop_relationships.append(relationship)
+
+                if not hop_episodic and used_threshold is not None:
+                    print(f"[Timing] episodic_retrieve_fallback_threshold={used_threshold}")
+
+                if hop < max_depth:
+                    expansion_terms = self._collect_expansion_terms(semantic_results)
+                    for term in expansion_terms[:max_queries_per_hop]:
+                        normalized_term = self._normalize_query(term)
+                        if normalized_term and normalized_term not in seen_queries:
+                            seen_queries.add(normalized_term)
+                            next_queries.append(term)
+
+            hop_results.append({
+                "depth": hop,
+                "queries": hop_queries,
+                "episodic": hop_episodic,
+                "entities": hop_entities,
+                "relationships": hop_relationships,
+            })
+
+            current_queries = next_queries
+            if not current_queries:
+                break
+
+        semantic_output = {
+            "entities": accumulated_entities,
+            "relationships": accumulated_relationships,
+            "memory_ids": accumulated_memory_ids,
+        }
+
+        return {
+            "episodic": accumulated_episodic,
+            "semantic": semantic_output,
+            "entities": accumulated_entities,
+            "relationships": accumulated_relationships,
+            "memory_ids": accumulated_memory_ids,
+            "depth": max_depth,
+            "hop_results": hop_results,
+        }
+
+    def retrieve_memory(self, query, depth=0):
+        raw_results = self.retrieve_memory_raw(query, depth=depth)
+        hop_results = raw_results.get("hop_results", [])
+
+        output_lines = []
+
+        for hop_result in hop_results:
+            depth_index = hop_result.get("depth", 0)
+            hop_queries = hop_result.get("queries", [])
+            hop_episodic = hop_result.get("episodic", [])
+            hop_entities = hop_result.get("entities", [])
+            hop_relationships = hop_result.get("relationships", [])
+
+            output_lines.append(f"Depth {depth_index}:")
+
+            if hop_queries:
+                output_lines.append("  Queries:")
+                for item in hop_queries:
+                    output_lines.append(f"  - {item}")
+
+            if hop_episodic:
+                output_lines.append("  Relevant episodic memories:")
+                for memory in hop_episodic:
+                    content = memory.get("content")
+                    if content:
+                        output_lines.append(f"  - {content}")
+            else:
+                output_lines.append("  Relevant episodic memories: None found")
+
+            if hop_relationships:
+                output_lines.append("  Relevant graph facts:")
+                for relationship in hop_relationships:
+                    source = relationship.get("source")
+                    relation_type = relationship.get("type")
+                    target = relationship.get("target")
+                    if source and relation_type and target:
+                        output_lines.append(f"  - {source} -> {relation_type} -> {target}")
+            else:
+                output_lines.append("  Relevant graph facts: None found")
+
+            if hop_entities:
+                output_lines.append("  Query entities:")
+                for entity in hop_entities:
+                    name = entity.get("name")
+                    labels = entity.get("labels", [])
+                    if name:
+                        if labels:
+                            output_lines.append(f"  - {name} ({', '.join(labels)})")
+                        else:
+                            output_lines.append(f"  - {name}")
+            else:
+                output_lines.append("  Query entities: None found")
+
+            output_lines.append("")
+
+        return "\n".join(line for line in output_lines if line is not None).rstrip()
