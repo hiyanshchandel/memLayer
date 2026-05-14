@@ -14,6 +14,26 @@ class MemoryAgent:
     _graph_worker_lock = threading.Lock()
     _graph_context_cache = {}
     _graph_context_cache_lock = threading.Lock()
+    _query_stopwords = {
+        "a", "an", "and", "are", "as", "be", "did", "do", "does", "for", "from", "give",
+        "go", "had", "has", "have", "how", "i", "in", "is", "it", "me", "my", "of",
+        "on", "or", "tell", "that", "the", "their", "them", "there", "these", "they",
+        "this", "those", "to", "was", "were", "what", "when", "where", "which", "who",
+        "whom", "whose", "why", "with", "would", "you", "your", "about", "say", "said",
+        "says", "asking", "ask", "asked", "show", "shown", "please", "remember", "recall",
+    }
+    _query_acronyms = {
+        "api": "application programming interface",
+        "db": "database",
+        "etl": "extract transform load",
+        "gpu": "graphics processing unit",
+        "llm": "large language model",
+        "ml": "machine learning",
+        "nlp": "natural language processing",
+        "rag": "retrieval augmented generation",
+        "sql": "structured query language",
+        "ui": "user interface",
+    }
 
     def __init__(self):
         self.episodic_manager = EpisodicMemoryManager()
@@ -153,6 +173,81 @@ class MemoryAgent:
     def _normalize_query(self, query):
         return " ".join(query.strip().split()).lower()
 
+    def _expand_query_phrase(self, phrase):
+        expanded_tokens = []
+        for token in re.findall(r"[a-z0-9']+", str(phrase).lower()):
+            if token in self._query_stopwords:
+                continue
+
+            expansion = self._query_acronyms.get(token)
+            if expansion:
+                expanded_tokens.extend(expansion.split())
+            else:
+                expanded_tokens.append(token)
+
+        return " ".join(expanded_tokens).strip()
+
+    def _rewrite_query_for_retrieval(self, query):
+        normalized_query = self._normalize_query(str(query or ""))
+        if not normalized_query:
+            return normalized_query
+
+        stripped_query = re.sub(r"[?.!]+$", "", normalized_query).strip()
+        pattern_templates = (
+            (r"^(?:what|who|which|where|when|why|how)\s+did\s+i\s+(?:say|mention|ask)\s+about\s+(?P<topic>.+)$", "user discussed {topic}"),
+            (r"^(?:what|who|which|where|when|why|how)\s+do\s+i\s+know\s+about\s+(?P<topic>.+)$", "user knows about {topic}"),
+            (r"^(?:tell|show|give)\s+me\s+about\s+(?P<topic>.+)$", "{topic}"),
+            (r"^(?:what|who|which|where|when|why|how)\s+(?:is|are)\s+(?P<topic>.+)$", "{topic}"),
+            (r"^(?:remember|recall)\s+(?P<topic>.+)$", "{topic}"),
+            (r"^(?:what|who|which|where|when|why|how)\s+(?:was|were)\s+(?P<topic>.+)$", "{topic}"),
+        )
+
+        for pattern, template in pattern_templates:
+            match = re.match(pattern, stripped_query)
+            if match:
+                topic = self._expand_query_phrase(match.group("topic"))
+                if topic:
+                    return template.format(topic=topic)
+
+        rewritten = self._expand_query_phrase(stripped_query)
+        return rewritten or stripped_query
+
+    def _episodic_confidence_from_threshold(self, threshold):
+        if threshold is None:
+            return {"label": "unbounded", "score": 0.0, "fallback_used": True}
+
+        if threshold >= 0.82:
+            return {"label": "high", "score": 0.95, "fallback_used": False}
+        if threshold >= 0.65:
+            return {"label": "medium", "score": 0.75, "fallback_used": False}
+        if threshold >= 0.5:
+            return {"label": "guarded", "score": 0.55, "fallback_used": False}
+        return {"label": "low", "score": 0.35, "fallback_used": False}
+
+    def _summarize_retrieval_confidence(self, query_runs):
+        if not query_runs:
+            return {"label": "unknown", "score": 0.0, "fallback_used": False}
+
+        fallback_used = any(run.get("fallback_used") for run in query_runs)
+        score = min(run.get("confidence_score", 0.0) for run in query_runs)
+
+        if fallback_used:
+            label = "low"
+        elif score >= 0.9:
+            label = "high"
+        elif score >= 0.7:
+            label = "medium"
+        elif score >= 0.5:
+            label = "guarded"
+        else:
+            label = "low"
+
+        return {
+            "label": label,
+            "score": round(score, 2),
+            "fallback_used": fallback_used,
+        }
+
     def _collect_expansion_terms(self, semantic_results):
         expansion_terms = []
 
@@ -223,10 +318,10 @@ class MemoryAgent:
     def retrieve_memory_raw(self, query, depth=0, max_queries_per_hop=5):
         max_depth = max(0, int(depth))
 
-        accumulated_episodic = []
-        accumulated_entities = []
-        accumulated_relationships = []
-        accumulated_memory_ids = []
+        accumulated_episodic = {}
+        accumulated_entities = {}
+        accumulated_relationships = {}
+        accumulated_memory_ids = set()
         hop_results = []
 
         seen_memory_ids = set()
@@ -242,12 +337,15 @@ class MemoryAgent:
             hop_episodic = []
             hop_entities = []
             hop_relationships = []
+            hop_query_runs = []
             hop_queries = list(current_queries)
 
             for seed_query in current_queries:
-                query_embedding = get_embedding(seed_query)
+                rewritten_query = self._rewrite_query_for_retrieval(seed_query)
+                query_embedding = get_embedding(rewritten_query)
                 episodic_results = []
                 used_threshold = None
+                confidence = {"label": "unknown", "score": 0.0, "fallback_used": False}
 
                 for threshold in EPISODIC_RETRIEVAL_FALLBACK_THRESHOLDS:
                     episodic_results = self.episodic_manager.retrieve_similar(
@@ -255,26 +353,49 @@ class MemoryAgent:
                         threshold=threshold if threshold is not None else 0.0,
                     )
                     used_threshold = threshold
+                    confidence = self._episodic_confidence_from_threshold(threshold)
                     if episodic_results:
                         break
 
-                semantic_results = self.graph_manager.retrieve_entities_and_relationships(seed_query)
+                semantic_results = self.graph_manager.retrieve_entities_and_relationships(rewritten_query)
+                hop_query_runs.append({
+                    "original_query": seed_query,
+                    "rewritten_query": rewritten_query,
+                    "used_threshold": used_threshold,
+                    "confidence_label": confidence["label"],
+                    "confidence_score": confidence["score"],
+                    "fallback_used": confidence["fallback_used"],
+                    "episodic_count": len(episodic_results),
+                    "entity_count": len(semantic_results.get("entities", [])),
+                    "relationship_count": len(semantic_results.get("relationships", [])),
+                })
 
                 for memory in episodic_results:
                     memory_id = memory.get("id")
-                    if memory_id and memory_id not in seen_memory_ids:
+                    if not memory_id:
+                        continue
+
+                    current_score = float(memory.get("similarity", 0.0) or 0.0)
+                    existing_memory = accumulated_episodic.get(memory_id)
+                    if existing_memory is None or current_score > float(existing_memory.get("similarity", 0.0) or 0.0):
+                        accumulated_episodic[memory_id] = memory
+
+                    if memory_id not in seen_memory_ids:
                         seen_memory_ids.add(memory_id)
-                        accumulated_episodic.append(memory)
                         hop_episodic.append(memory)
-                        accumulated_memory_ids.append(memory_id)
 
                 for entity in semantic_results.get("entities", []):
                     entity_name = entity.get("name")
                     entity_labels = tuple(entity.get("labels", []))
                     entity_key = (entity_name, entity_labels)
+                    entity_score = float(entity.get("score", 0.0) or 0.0)
+                    if entity_name:
+                        existing_entity = accumulated_entities.get(entity_key)
+                        if existing_entity is None or entity_score > float(existing_entity.get("score", 0.0) or 0.0):
+                            accumulated_entities[entity_key] = entity
+
                     if entity_name and entity_key not in seen_entities:
                         seen_entities.add(entity_key)
-                        accumulated_entities.append(entity)
                         hop_entities.append(entity)
 
                 for relationship in semantic_results.get("relationships", []):
@@ -284,9 +405,13 @@ class MemoryAgent:
                         relationship.get("target"),
                         relationship.get("related_node"),
                     )
+                    relationship_score = float(relationship.get("score", 0.0) or 0.0)
+                    existing_relationship = accumulated_relationships.get(relationship_key)
+                    if existing_relationship is None or relationship_score > float(existing_relationship.get("score", 0.0) or 0.0):
+                        accumulated_relationships[relationship_key] = relationship
+
                     if relationship_key not in seen_relationships:
                         seen_relationships.add(relationship_key)
-                        accumulated_relationships.append(relationship)
                         hop_relationships.append(relationship)
 
                 if not hop_episodic and used_threshold is not None:
@@ -306,33 +431,77 @@ class MemoryAgent:
                 "episodic": hop_episodic,
                 "entities": hop_entities,
                 "relationships": hop_relationships,
+                "query_runs": hop_query_runs,
+                "retrieval_confidence": self._summarize_retrieval_confidence(hop_query_runs),
             })
 
             current_queries = next_queries
             if not current_queries:
                 break
 
+        sorted_episodic = sorted(
+            accumulated_episodic.values(),
+            key=lambda item: float(item.get("similarity", 0.0) or 0.0),
+            reverse=True,
+        )
+        sorted_entities = sorted(
+            accumulated_entities.values(),
+            key=lambda item: (
+                float(item.get("score", 0.0) or 0.0),
+                len(item.get("relationships", [])) if isinstance(item.get("relationships", []), list) else 0,
+                item.get("name", "").lower(),
+            ),
+            reverse=True,
+        )
+        sorted_relationships = sorted(
+            accumulated_relationships.values(),
+            key=lambda item: (
+                float(item.get("score", 0.0) or 0.0),
+                item.get("source", "") or "",
+                item.get("type", "") or "",
+                item.get("target", "") or "",
+            ),
+            reverse=True,
+        )
+
         semantic_output = {
-            "entities": accumulated_entities,
-            "relationships": accumulated_relationships,
-            "memory_ids": accumulated_memory_ids,
+            "entities": sorted_entities,
+            "relationships": sorted_relationships,
+            "memory_ids": sorted(accumulated_memory_ids),
         }
 
+        overall_confidence = self._summarize_retrieval_confidence(
+            [hop_result.get("retrieval_confidence", {}) for hop_result in hop_results]
+        )
+
         return {
-            "episodic": accumulated_episodic,
+            "episodic": sorted_episodic,
             "semantic": semantic_output,
-            "entities": accumulated_entities,
-            "relationships": accumulated_relationships,
-            "memory_ids": accumulated_memory_ids,
+            "entities": sorted_entities,
+            "relationships": sorted_relationships,
+            "memory_ids": sorted(accumulated_memory_ids),
             "depth": max_depth,
             "hop_results": hop_results,
+            "retrieval_confidence": overall_confidence,
         }
 
     def retrieve_memory(self, query, depth=0):
         raw_results = self.retrieve_memory_raw(query, depth=depth)
         hop_results = raw_results.get("hop_results", [])
+        retrieval_confidence = raw_results.get("retrieval_confidence", {})
 
         output_lines = []
+
+        if retrieval_confidence:
+            output_lines.append(
+                f"Retrieval confidence: {retrieval_confidence.get('label', 'unknown')} "
+                f"(score={retrieval_confidence.get('score', 0.0):.2f})"
+            )
+            if retrieval_confidence.get("fallback_used"):
+                output_lines.append(
+                    "Warning: an unbounded fallback was used, so some memories may be weakly relevant."
+                )
+            output_lines.append("")
 
         for hop_result in hop_results:
             depth_index = hop_result.get("depth", 0)
@@ -340,8 +509,16 @@ class MemoryAgent:
             hop_episodic = hop_result.get("episodic", [])
             hop_entities = hop_result.get("entities", [])
             hop_relationships = hop_result.get("relationships", [])
+            hop_confidence = hop_result.get("retrieval_confidence", {})
 
             output_lines.append(f"Depth {depth_index}:")
+            if hop_confidence:
+                output_lines.append(
+                    f"  Retrieval confidence: {hop_confidence.get('label', 'unknown')} "
+                    f"(score={hop_confidence.get('score', 0.0):.2f})"
+                )
+                if hop_confidence.get("fallback_used"):
+                    output_lines.append("  Warning: unbounded fallback was required for this hop.")
 
             if hop_queries:
                 output_lines.append("  Queries:")

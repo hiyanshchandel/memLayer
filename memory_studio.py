@@ -7,6 +7,7 @@ import math
 import os
 import re
 import sqlite3
+import threading
 from typing import Any
 
 import streamlit as st
@@ -45,33 +46,27 @@ def inject_styles() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
         :root {
-            --bg-0: #f7f4ee;
-            --bg-1: #eef3f8;
-            --bg-2: #ffffff;
-            --panel: rgba(255, 255, 255, 0.82);
-            --panel-strong: rgba(255, 255, 255, 0.96);
-            --stroke: rgba(15, 23, 42, 0.08);
-            --stroke-strong: rgba(15, 23, 42, 0.14);
-            --text: #0f172a;
-            --muted: #5b6678;
-            --accent: #0f766e;
-            --accent-2: #b45309;
-            --accent-3: #15803d;
-            --warn: #be123c;
-            --shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+            --bg-main: #fdfdfd;
+            --card-bg: #ffffff;
+            --border: #e4e4e7;
+            --text-primary: #09090b;
+            --text-muted: #71717a;
+            --accent: #18181b;
+            --accent-hover: #27272a;
+            --primary: #3b82f6;
+            --radius: 12px;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
 
         [data-testid="stAppViewContainer"] {
-            background:
-                radial-gradient(circle at 10% 8%, rgba(15, 118, 110, 0.09), transparent 0 22%),
-                radial-gradient(circle at 92% 6%, rgba(180, 83, 9, 0.08), transparent 0 20%),
-                radial-gradient(circle at 84% 88%, rgba(21, 128, 61, 0.07), transparent 0 22%),
-                linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
-            color: var(--text);
-            font-family: 'Space Grotesk', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            background-image: none !important;
         }
 
         [data-testid="stHeader"] {
@@ -79,557 +74,288 @@ def inject_styles() -> None:
         }
 
         .block-container {
-            padding-top: 0.6rem;
-            padding-bottom: 1.1rem;
-            max-width: 100%;
-            padding-left: 0.5rem;
-            padding-right: 0.5rem;
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            max-width: 1200px;
         }
 
-        [data-testid="stToolbar"] {
-            right: 1rem;
-        }
-
-        .hero-shell,
-        .panel-shell,
-        .summary-shell,
-        .graph-shell,
-        .log-shell,
-        .query-shell,
-        .reset-shell {
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 248, 252, 0.95));
-            border: 1px solid var(--stroke);
-            border-radius: 28px;
-            box-shadow: var(--shadow);
+        h1, h2, h3, h4, h5, h6, p, span, div, label {
+            font-family: 'Inter', sans-serif !important;
         }
 
         .hero-shell {
-            padding: 1.5rem 1.6rem;
-            position: relative;
-            overflow: hidden;
+            padding: 2.5rem 0;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
         }
-
-        .hero-shell::after {
-            content: "";
-            position: absolute;
-            inset: auto -10% -55% auto;
-            width: 24rem;
-            height: 24rem;
-            border-radius: 999px;
-            background: radial-gradient(circle, rgba(15, 118, 110, 0.12) 0%, rgba(15, 118, 110, 0.02) 55%, transparent 70%);
-            filter: blur(22px);
-            pointer-events: none;
-        }
-
-        .hero-eyebrow,
-        .section-eyebrow,
-        .graph-eyebrow,
-        .mini-eyebrow {
-            color: var(--accent);
-            text-transform: uppercase;
-            letter-spacing: 0.22em;
-            font-size: 0.72rem;
-            font-weight: 700;
-            margin-bottom: 0.55rem;
-        }
-
         .hero-title {
-            font-size: clamp(2.3rem, 4vw, 4.7rem);
-            line-height: 0.95;
-            margin: 0 0 0.85rem 0;
-            font-weight: 800;
-            letter-spacing: -0.05em;
-            max-width: 11ch;
-            color: #0f172a;
-        }
-
-        .hero-copy {
-            color: var(--muted);
-            max-width: 68ch;
-            font-size: 1.02rem;
-            line-height: 1.65;
+            font-size: 2.75rem;
+            font-weight: 700;
+            color: var(--text-primary);
             margin-bottom: 1rem;
+            letter-spacing: -0.03em;
         }
+        .hero-copy {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            max-width: 640px;
+            margin: 0 auto 1.5rem auto;
+            line-height: 1.6;
+        }
+        .hero-shell::after { display: none !important; }
 
         .chip-row {
             display: flex;
+            justify-content: center;
+            gap: 0.5rem;
             flex-wrap: wrap;
-            gap: 0.65rem;
         }
-
         .chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.55rem 0.8rem;
+            padding: 0.35rem 0.8rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
             border-radius: 999px;
-            background: rgba(255, 255, 255, 0.92);
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            color: #334155;
-            font-size: 0.84rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            box-shadow: var(--shadow-sm);
         }
-
         .chip strong {
-            color: #0f172a;
-            font-weight: 700;
+            color: var(--text-primary);
+            font-weight: 600;
         }
 
-        .panel-shell,
-        .summary-shell,
-        .query-shell,
-        .reset-shell,
-        .log-shell {
-            padding: 1rem 1rem 0.95rem 1rem;
+        .panel-shell, .summary-shell, .query-shell, .reset-shell,
+        .input-card, .settings-card, .status-card, .metric-card, .reset-card, .graph-empty, .graph-shell, .query-box {
+            background: var(--card-bg) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--radius) !important;
+            padding: 1.5rem !important;
+            box-shadow: var(--shadow-sm) !important;
+            margin-bottom: 1rem;
         }
 
-        .panel-shell,
-        .summary-shell,
-        .query-shell,
-        .reset-shell,
-        .log-shell {
-            margin-top: 1rem;
+        .panel-title, .summary-title, .query-title, .reset-title, .graph-title, .section-eyebrow, .mini-eyebrow, h4 {
+            font-size: 1.1rem !important;
+            font-weight: 600 !important;
+            color: var(--text-primary) !important;
+            margin-bottom: 0.5rem !important;
+            margin-top: 0 !important;
+            letter-spacing: -0.01em !important;
+            text-transform: none !important;
         }
-
-        .panel-title,
-        .summary-title,
-        .query-title,
-        .reset-title,
-        .graph-title,
-        .log-title {
-            margin: 0 0 0.3rem 0;
-            font-size: 1.02rem;
-            font-weight: 700;
-            color: #0f172a;
-            letter-spacing: -0.02em;
-        }
-
-        .panel-copy,
-        .summary-copy,
-        .query-copy,
-        .reset-copy,
-        .graph-copy,
-        .log-copy {
-            color: var(--muted);
-            margin: 0 0 0.85rem 0;
-            line-height: 1.55;
-            font-size: 0.92rem;
-        }
-
-        .input-card,
-        .settings-card,
-        .status-card,
-        .metric-card,
-        .reset-card,
-        .graph-empty {
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.95));
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            border-radius: 20px;
-            padding: 1rem;
-        }
-
-        .settings-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.75rem;
-        }
-
-        .settings-grid .wide {
-            grid-column: 1 / -1;
+        .panel-copy, .summary-copy, .query-copy, .reset-copy, .graph-copy, p, .footer-note, .progress-copy {
+            color: var(--text-muted) !important;
+            font-size: 0.95rem !important;
+            line-height: 1.5 !important;
+            margin-top: 0 !important;
+            margin-bottom: 0.75rem !important;
         }
 
         .stButton > button {
-            width: 100%;
-            border-radius: 16px;
-            border: none;
-            padding: 0.82rem 1rem;
-            font-weight: 700;
-            color: #ffffff;
-            background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
-            box-shadow: 0 14px 34px rgba(15, 118, 110, 0.18);
-            transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+            background: var(--accent) !important;
+            color: #ffffff !important;
+            border: none !important;
+            border-radius: 8px !important;
+            padding: 0.6rem 1rem !important;
+            font-weight: 500 !important;
+            transition: all 0.2s ease !important;
+            box-shadow: var(--shadow-sm) !important;
+            height: auto !important;
         }
-
         .stButton > button:hover {
+            background: var(--accent-hover) !important;
             transform: translateY(-1px);
-            box-shadow: 0 18px 42px rgba(37, 99, 235, 0.18);
-            filter: saturate(1.03);
         }
 
-        .stTextArea textarea,
-        .stTextInput input {
-            border-radius: 16px !important;
-            background: rgba(255, 255, 255, 0.98) !important;
-            border: 1px solid rgba(15, 23, 42, 0.12) !important;
-            color: var(--text) !important;
+        .stTextInput input, .stTextArea textarea {
+            background: var(--card-bg) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 8px !important;
+            padding: 0.6rem 0.8rem !important;
+            color: var(--text-primary) !important;
+            box-shadow: var(--shadow-sm) !important;
+        }
+        .stTextInput input:focus, .stTextArea textarea:focus {
+            border-color: var(--primary) !important;
+            outline: none !important;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
         }
 
-        .stFileUploader div[data-testid="stFileUploaderDropzone"] {
-            background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
-            border: 1px dashed rgba(255, 255, 255, 0.22);
-            border-radius: 16px;
+        div[data-testid="stWidgetLabel"] label, div[data-testid="stWidgetLabel"] p {
+            color: var(--text-primary) !important;
+            font-weight: 600 !important;
+            font-size: 0.9rem !important;
         }
 
-        .stFileUploader div[data-testid="stFileUploaderDropzone"] * {
-            color: #ffffff !important;
-            opacity: 1 !important;
+        [data-testid="stFileUploaderDropzone"] {
+            background: var(--bg-main) !important;
+            border: 1px dashed var(--border) !important;
+            border-radius: var(--radius) !important;
+            padding: 2rem !important;
+            transition: border-color 0.2s ease !important;
         }
-
-        .stFileUploader div[data-testid="stFileUploaderDropzone"] button,
-        .stFileUploader div[data-testid="stFileUploaderDropzone"] button * {
-            color: #ffffff !important;
-            background: rgba(255, 255, 255, 0.08) !important;
-            border-color: rgba(255, 255, 255, 0.18) !important;
+        [data-testid="stFileUploaderDropzone"]:hover {
+            border-color: var(--primary) !important;
         }
-
-        .stFileUploader div[data-testid="stFileUploaderDropzone"] svg,
-        .stFileUploader div[data-testid="stFileUploaderDropzone"] path {
-            fill: #ffffff !important;
-            stroke: #ffffff !important;
+        [data-testid="stFileUploaderDropzone"] * {
+            color: var(--text-muted) !important;
         }
-
-        .stSlider [data-baseweb="slider"] {
-            padding-top: 0.35rem;
-            padding-bottom: 0.2rem;
-        }
-
-        .stRadio [role="radiogroup"] {
-            gap: 0.5rem;
+        [data-testid="stFileUploaderDropzone"] button {
+            background: white !important;
+            border: 1px solid var(--border) !important;
+            color: var(--text-primary) !important;
+            border-radius: 8px !important;
+            box-shadow: var(--shadow-sm) !important;
         }
 
         .stTabs [data-baseweb="tab-list"] {
-            gap: 0.45rem;
-            background: transparent;
-            border-bottom: none;
+            background: transparent !important;
+            border-bottom: 1px solid var(--border) !important;
+            gap: 1.5rem !important;
+            padding: 0 !important;
         }
-
         .stTabs [data-baseweb="tab"] {
-            border-radius: 999px;
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            background: #0f172a !important;
-            color: #ffffff;
-            padding: 0.5rem 0.95rem;
-            min-height: 2.4rem;
+            padding: 0.75rem 0.25rem !important;
+            color: var(--text-muted) !important;
+            border: none !important;
+            background: transparent !important;
+            font-weight: 500 !important;
+            border-radius: 0 !important;
+            min-height: auto !important;
         }
-
-        .stTabs [data-baseweb="tab"] p {
-            color: inherit !important;
-            font-weight: 700;
-        }
-
         .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%) !important;
-            border-color: transparent;
-            box-shadow: 0 10px 24px rgba(15, 118, 110, 0.16);
-            color: #ffffff !important;
+            color: var(--text-primary) !important;
+            border-bottom: 2px solid var(--text-primary) !important;
+            box-shadow: none !important;
         }
 
-        .stTabs [aria-selected="false"] {
-            background: #0f172a !important;
-            color: #ffffff !important;
-            opacity: 0.74;
-        }
-
-        .stTabs [aria-selected="false"]:hover {
-            opacity: 0.92;
-        }
-
-        div[data-testid="stWidgetLabel"],
-        div[data-testid="stWidgetLabel"] p,
-        div[data-testid="stWidgetLabel"] label,
-        div[data-testid="stRadio"] p,
-        div[data-testid="stSlider"] p,
-        div[data-testid="stTextInput"] p,
-        div[data-testid="stTextArea"] p,
-        div[data-testid="stFileUploader"] p {
-            color: #0f172a !important;
-            opacity: 1 !important;
-        }
-
-        div[data-testid="stRadio"] label,
-        div[data-testid="stSlider"] label,
-        div[data-testid="stTextInput"] label,
-        div[data-testid="stTextArea"] label,
-        div[data-testid="stFileUploader"] label {
-            color: #0f172a !important;
-            font-weight: 600 !important;
-        }
-
-        div[data-testid="stFileUploaderDropzoneInstructions"],
-        div[data-testid="stFileUploaderDropzoneInstructions"] * {
-            color: #334155 !important;
-            opacity: 1 !important;
-        }
-
-        .stRadio [role="radiogroup"] label,
-        .stRadio [role="radiogroup"] span,
-        .stSlider [data-baseweb="slider"] span,
-        .stSlider [data-baseweb="slider"] label {
-            color: #0f172a !important;
-        }
-
-        .stTextArea textarea::placeholder,
-        .stTextInput input::placeholder {
-            color: #94a3b8 !important;
-            opacity: 1 !important;
-        }
-
-        .metric-grid {
+        .metric-grid, .query-results, .reset-grid {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 0.8rem;
-            margin-bottom: 0.85rem;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
         }
 
-        .metric-card {
-            padding: 0.9rem 0.95rem;
-            min-height: 92px;
+        .chat-shell {
+            background: var(--card-bg) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--radius) !important;
+            padding: 1.5rem !important;
+            box-shadow: var(--shadow-sm) !important;
+            margin-bottom: 1rem;
         }
 
-        .metric-label {
-            color: var(--muted);
-            text-transform: uppercase;
-            letter-spacing: 0.16em;
-            font-size: 0.68rem;
-            font-weight: 700;
-            margin-bottom: 0.55rem;
-        }
-
-        .metric-value {
-            font-size: 1.7rem;
-            line-height: 1;
-            font-weight: 800;
-            color: #0f172a;
-            letter-spacing: -0.05em;
-            margin-bottom: 0.3rem;
-        }
-
-        .metric-detail {
-            color: var(--muted);
-            font-size: 0.85rem;
-            line-height: 1.45;
-        }
-
-        .graph-shell {
-            padding: 1rem;
-            margin-top: 1rem;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .graph-shell::before {
-            content: "";
-            position: absolute;
-            inset: -35% auto auto -18%;
-            width: 15rem;
-            height: 15rem;
-            border-radius: 999px;
-            background: radial-gradient(circle, rgba(37, 99, 235, 0.08) 0%, rgba(37, 99, 235, 0.02) 60%, transparent 72%);
-            filter: blur(24px);
-            pointer-events: none;
-        }
-
-        .graph-header {
+        .chat-header {
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
-            gap: 0.75rem;
-            margin-bottom: 0.75rem;
-        }
-
-        .graph-title {
-            font-size: 1.06rem;
-            color: #0f172a;
-        }
-
-        .graph-chips {
-            display: flex;
+            gap: 1rem;
             flex-wrap: wrap;
-            justify-content: flex-end;
-            gap: 0.45rem;
+            margin-bottom: 1rem;
         }
 
-        .graph-chip {
-            padding: 0.38rem 0.65rem;
-            border-radius: 999px;
-            background: rgba(241, 245, 249, 0.96);
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            color: #334155;
-            font-size: 0.78rem;
-            font-weight: 600;
-        }
-
-        .graph-shell svg {
-            width: 100%;
-            height: auto;
-            display: block;
-            overflow: visible;
-        }
-
-        .graph-core {
-            fill: #dbeafe;
-            opacity: 1;
-        }
-
-        .graph-link {
-            stroke-width: 1.8;
-            stroke-linecap: round;
-            opacity: 0.34;
-        }
-
-        .graph-link.active {
-            opacity: 1;
-            stroke-width: 2.2;
-        }
-
-        .graph-node {
-            transform-box: fill-box;
-            transform-origin: center;
-        }
-
-        .graph-node__ring {
-            fill: #ffffff;
-            stroke-width: 2.2;
-            filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.08));
-        }
-
-        .graph-node__label {
-            fill: #0f172a;
-            font-size: 11px;
-            font-weight: 700;
-            text-anchor: middle;
-        }
-
-        .graph-node__meta {
-            fill: #64748b;
-            font-size: 9px;
-            font-weight: 600;
-            text-anchor: middle;
-        }
-
-        .graph-empty {
-            min-height: 365px;
+        .chat-transcript {
             display: flex;
             flex-direction: column;
-            justify-content: center;
-            gap: 0.55rem;
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.95));
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            border-radius: 28px;
-            box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .chat-empty {
             padding: 1rem;
-        }
-
-        .graph-empty h3 {
-            margin: 0;
-            color: #0f172a;
-            font-size: 1.32rem;
-            letter-spacing: -0.04em;
-        }
-
-        .graph-empty p {
-            margin: 0;
-            color: #5b6678;
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+            background: #fafafa;
+            color: var(--text-muted);
             line-height: 1.6;
         }
 
-        .graph-empty__chips {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.45rem;
-            margin-top: 0.4rem;
-        }
-
-        .graph-empty__chips span,
-        .mini-pill {
-            padding: 0.38rem 0.65rem;
-            border-radius: 999px;
-            background: rgba(241, 245, 249, 0.96);
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            color: #334155;
-            font-size: 0.77rem;
-            font-weight: 600;
-        }
-
-        .progress-copy {
-            color: var(--muted);
-            font-size: 0.88rem;
+        .chat-meta {
+            color: var(--text-muted);
+            font-size: 0.85rem;
             margin-top: 0.35rem;
         }
 
-        .query-results {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.85rem;
+        .chat-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.28rem 0.65rem;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: #fafafa;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            font-weight: 500;
         }
 
-        .query-box {
-            background: rgba(255, 255, 255, 0.94);
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            border-radius: 18px;
-            padding: 0.9rem;
+        [data-testid="stChatInput"] textarea {
+            border-radius: 12px !important;
+            border: 1px solid var(--border) !important;
+            background: var(--card-bg) !important;
+            color: var(--text-primary) !important;
         }
 
-        .query-box h4 {
-            margin: 0 0 0.5rem 0;
-            color: #0f172a;
-            font-size: 0.95rem;
+        [data-testid="stChatMessage"] {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: linear-gradient(180deg, #ffffff, #fafafa);
+            padding: 0.35rem 0.4rem;
+            box-shadow: var(--shadow-sm);
         }
 
-        .query-box .stTextArea textarea {
-            min-height: 180px;
+        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li {
+            color: var(--text-primary) !important;
         }
 
-        .reset-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.85rem;
+        .metric-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+            letter-spacing: -0.02em;
         }
-
-        .reset-card h4 {
-            margin: 0 0 0.35rem 0;
-            color: #0f172a;
-            font-size: 0.94rem;
-        }
-
-        .reset-card p {
-            margin: 0;
-            color: var(--muted);
+        .metric-label {
             font-size: 0.85rem;
-            line-height: 1.5;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+        .metric-detail {
+            font-size: 0.8rem;
+            color: var(--text-muted);
         }
 
-        .footer-note {
-            color: var(--muted);
-            font-size: 0.84rem;
-            line-height: 1.55;
-            margin-top: 0.55rem;
+        .graph-shell::before { display: none !important; }
+        .graph-header { margin-bottom: 1.5rem; }
+        .graph-title { font-size: 1.25rem !important; }
+        .graph-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+        .graph-chip {
+            padding: 0.25rem 0.6rem;
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text-muted);
         }
 
-        .flow-divider {
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.22), transparent);
-            margin: 1rem 0;
+        .stRadio [role="radiogroup"] label {
+            color: var(--text-primary) !important;
+            font-weight: 500 !important;
+        }
+        .stSlider [data-baseweb="slider"] label {
+            color: var(--text-primary) !important;
         }
 
-        @media (max-width: 960px) {
-            .metric-grid,
-            .query-results,
-            .reset-grid,
-            .settings-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .hero-title {
-                max-width: none;
-            }
-
-            .graph-header {
-                flex-direction: column;
-            }
-
-            .graph-chips {
-                justify-content: flex-start;
-            }
+        @media (max-width: 768px) {
+            .hero-title { font-size: 2rem; }
+            .metric-grid, .query-results, .reset-grid { grid-template-columns: 1fr; }
         }
         </style>
         """,
@@ -839,6 +565,116 @@ def answer_query_from_retrieval(user_query: str, retrieval_output: str) -> str:
     return (response.choices[0].message.content or "").strip()
 
 
+def format_chat_memory_context(raw_results: dict[str, Any], max_items: int = 4) -> str:
+    confidence = raw_results.get("retrieval_confidence", {}) or {}
+    episodic = raw_results.get("episodic", []) or []
+    entities = raw_results.get("entities", []) or []
+    relationships = raw_results.get("relationships", []) or []
+
+    lines = []
+    if confidence:
+        score = float(confidence.get("score", 0.0) or 0.0)
+        lines.append(f"Retrieval confidence: {confidence.get('label', 'unknown')} (score={score:.2f})")
+        if confidence.get("fallback_used"):
+            lines.append("Warning: fallback retrieval widened the search, so some memories may be weakly relevant.")
+
+    if episodic:
+        lines.append("Relevant episodic memories:")
+        for memory in episodic[:max_items]:
+            content = (memory.get("content") or "").strip()
+            if content:
+                lines.append(f"- {content}")
+
+    if entities:
+        lines.append("Relevant graph entities:")
+        for entity in entities[:max_items]:
+            name = entity.get("name")
+            label = entity.get("label") or ", ".join(entity.get("labels", []))
+            if name:
+                suffix = f" [{label}]" if label else ""
+                lines.append(f"- {name}{suffix}")
+
+    if relationships:
+        lines.append("Relevant graph relationships:")
+        for relationship in relationships[:max_items]:
+            source = relationship.get("source")
+            relation_type = relationship.get("type")
+            target = relationship.get("target")
+            if source and relation_type and target:
+                lines.append(f"- {source} -> {relation_type} -> {target}")
+
+    return "\n".join(lines).strip() or "No relevant memories found."
+
+
+def build_chat_prompt_history(chat_messages: list[dict[str, str]], limit: int = 8):
+    prompt_messages = []
+    for message in chat_messages[-limit:]:
+        role = message.get("role")
+        content = message.get("content", "")
+        if role in {"user", "assistant"} and content:
+            prompt_messages.append({"role": role, "content": content})
+    return prompt_messages
+
+
+def answer_chat_with_memory(user_input: str, memory_context: str, chat_messages: list[dict[str, str]], retrieval_confidence: dict[str, Any]) -> str:
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    confidence_label = retrieval_confidence.get("label", "unknown") if retrieval_confidence else "unknown"
+    confidence_score = float(retrieval_confidence.get("score", 0.0) or 0.0) if retrieval_confidence else 0.0
+    fallback_used = bool(retrieval_confidence.get("fallback_used")) if retrieval_confidence else False
+
+    prompt = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful chat assistant for MemLayer. Answer naturally and concisely. "
+                "Use the memory context when it is relevant, but do not invent facts. "
+                "If the memory context looks weak or uncertain, say so briefly instead of overcommitting."
+            ),
+        },
+        {
+            "role": "system",
+            "content": (
+                f"Memory context confidence: {confidence_label} (score={confidence_score:.2f}, fallback_used={fallback_used})\n\n"
+                f"Memory context:\n{memory_context}"
+            ),
+        },
+    ]
+
+    prompt.extend(build_chat_prompt_history(chat_messages))
+    prompt.append({"role": "user", "content": user_input})
+
+    response = openai_client.chat.completions.create(
+        model=model_name,
+        messages=prompt,
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
+def queue_chat_memory_ingest(user_input: str, assistant_output: str, retrieval_meta: dict[str, Any]):
+    def worker():
+        try:
+            memory_agent = MemoryAgent()
+            confidence = retrieval_meta.get("retrieval_confidence", {}) or {}
+            memory_blob = MemoryBlob(
+                content=(
+                    f"Conversation turn\nUser: {user_input}\nAssistant: {assistant_output}"
+                ),
+                memory_type="conversation_memory",
+                tags={
+                    "source_type": "chat",
+                    "content_kind": "conversation_turn",
+                    "retrieval_confidence": confidence.get("label", "unknown"),
+                    "retrieval_score": confidence.get("score", 0.0),
+                    "fallback_used": confidence.get("fallback_used", False),
+                },
+            )
+            memory_agent.store_memory(memory_blob, build_graph=True)
+        except Exception as exc:
+            print(f"[Timing] chat_memory_ingest_error={exc}")
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def create_graph_state():
     return {
         "entities": {},
@@ -1031,30 +867,17 @@ def render_graph_component_html(graph_state: dict[str, Any], stage_text: str, st
         margin: 0;
         padding: 0;
         background: transparent;
-        font-family: 'Space Grotesk', sans-serif;
-        color: #0f172a;
+        font-family: 'Inter', sans-serif;
+        color: #09090b;
     }}
 
     .graph-shell {{
-        position: relative;
-        overflow: hidden;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.96));
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        border-radius: 28px;
-        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
-        padding: 1rem;
-    }}
-
-    .graph-shell::before {{
-        content: "";
-        position: absolute;
-        inset: -35% auto auto -18%;
-        width: 15rem;
-        height: 15rem;
-        border-radius: 999px;
-        background: radial-gradient(circle, rgba(37, 99, 235, 0.08) 0%, rgba(37, 99, 235, 0.02) 60%, transparent 72%);
-        filter: blur(24px);
-        pointer-events: none;
+        background: #ffffff;
+        border: 1px solid #e4e4e7;
+        border-radius: 12px;
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        padding: 1.5rem;
+        margin-bottom: 1rem;
     }}
 
     .graph-header {{
@@ -1062,49 +885,44 @@ def render_graph_component_html(graph_state: dict[str, Any], stage_text: str, st
         justify-content: space-between;
         align-items: flex-start;
         gap: 0.75rem;
-        margin-bottom: 0.75rem;
-        position: relative;
-        z-index: 1;
+        margin-bottom: 1.5rem;
     }}
 
     .graph-eyebrow {{
-        color: #0f766e;
-        text-transform: uppercase;
-        letter-spacing: 0.22em;
-        font-size: 0.72rem;
-        font-weight: 700;
-        margin-bottom: 0.55rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #09090b;
+        margin-bottom: 0.5rem;
     }}
 
     .graph-title {{
-        font-size: 1.06rem;
-        font-weight: 700;
-        color: #0f172a;
-        letter-spacing: -0.02em;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #09090b;
     }}
 
     .graph-copy {{
-        color: #5b6678;
-        margin-top: 0.3rem;
-        line-height: 1.55;
-        font-size: 0.92rem;
+        color: #71717a;
+        font-size: 0.95rem;
+        line-height: 1.5;
+        margin-top: 0;
     }}
 
     .graph-chips {{
         display: flex;
         flex-wrap: wrap;
         justify-content: flex-end;
-        gap: 0.45rem;
+        gap: 0.5rem;
     }}
 
     .graph-chip {{
-        padding: 0.38rem 0.65rem;
+        padding: 0.25rem 0.6rem;
+        background: #fdfdfd;
+        border: 1px solid #e4e4e7;
         border-radius: 999px;
-        background: rgba(241, 245, 249, 0.96);
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        color: #334155;
-        font-size: 0.78rem;
-        font-weight: 600;
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: #71717a;
     }}
 
     .graph-shell svg {{
@@ -1112,94 +930,43 @@ def render_graph_component_html(graph_state: dict[str, Any], stage_text: str, st
         height: auto;
         display: block;
         overflow: visible;
-        position: relative;
-        z-index: 1;
     }}
 
-    .graph-core {{
-        fill: #dbeafe;
-        opacity: 1;
-    }}
-
-    .graph-link {{
-        stroke-width: 1.8;
-        stroke-linecap: round;
-        opacity: 0.34;
-    }}
-
-    .graph-link.active {{
-        opacity: 1;
-        stroke-width: 2.2;
-    }}
-
-    .graph-node {{
-        transform-box: fill-box;
-        transform-origin: center;
-    }}
-
-    .graph-node__ring {{
-        fill: #ffffff;
-        stroke-width: 2.2;
-        filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.08));
-    }}
-
-    .graph-node__label {{
-        fill: #0f172a;
-        font-size: 11px;
-        font-weight: 700;
-        text-anchor: middle;
-    }}
-
-    .graph-node__meta {{
-        fill: #64748b;
-        font-size: 9px;
-        font-weight: 600;
-        text-anchor: middle;
-    }}
+    .graph-core {{ fill: #dbeafe; opacity: 1; }}
+    .graph-link {{ stroke-width: 1.8; stroke-linecap: round; opacity: 0.34; }}
+    .graph-link.active {{ opacity: 1; stroke-width: 2.2; }}
+    
+    .graph-node {{ transform-box: fill-box; transform-origin: center; }}
+    .graph-node__ring {{ fill: #ffffff; stroke-width: 2.2; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.08)); }}
+    .graph-node__label {{ fill: #09090b; font-size: 11px; font-weight: 600; text-anchor: middle; }}
+    .graph-node__meta {{ fill: #71717a; font-size: 9px; font-weight: 500; text-anchor: middle; }}
 
     .graph-empty {{
         min-height: 365px;
         display: flex;
         flex-direction: column;
         justify-content: center;
-        gap: 0.55rem;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.95));
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        border-radius: 28px;
-        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
-        padding: 1rem;
+        gap: 0.5rem;
+        background: #ffffff;
+        border: 1px solid #e4e4e7;
+        border-radius: 12px;
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        padding: 1.5rem;
     }}
 
-    .graph-empty h3 {{
-        margin: 0;
-        color: #0f172a;
-        font-size: 1.32rem;
-        letter-spacing: -0.04em;
-    }}
+    .graph-empty h3 {{ margin: 0; color: #09090b; font-size: 1.25rem; font-weight: 600; }}
+    .graph-empty p {{ margin: 0; color: #71717a; line-height: 1.6; font-size: 0.95rem; }}
 
-    .graph-empty p {{
-        margin: 0;
-        color: #5b6678;
-        line-height: 1.6;
-    }}
-
-    .graph-empty__chips {{
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.45rem;
-        margin-top: 0.4rem;
-    }}
-
+    .graph-empty__chips {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }}
     .graph-empty__chips span {{
-        padding: 0.38rem 0.65rem;
+        padding: 0.25rem 0.6rem;
+        background: #fdfdfd;
+        border: 1px solid #e4e4e7;
         border-radius: 999px;
-        background: rgba(241, 245, 249, 0.96);
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        color: #334155;
-        font-size: 0.77rem;
-        font-weight: 600;
+        color: #71717a;
+        font-size: 0.8rem;
+        font-weight: 500;
     }}
-
     </style>
     {render_graph_html(graph_state, stage_text, stored_count, skipped_count, total_chunks, build_graph)}
     """
@@ -1606,6 +1373,99 @@ def render_query_tab():
             """, unsafe_allow_html=True)
 
 
+def render_chat_tab():
+    st.markdown(
+        """
+        <div class="chat-shell">
+            <div class="chat-header">
+                <div>
+                    <div class="query-title">Chat with memory</div>
+                    <div class="query-copy">Talk to the assistant while MemLayer retrieves relevant memories and writes the conversation back into memory in the background.</div>
+                </div>
+                <div class="chat-badge">Live retrieval + background memory ingest</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+        
+    st.session_state.setdefault("chat_messages", [])
+    st.session_state.setdefault("chat_depth", 1)
+
+    action_left, action_right = st.columns([0.72, 0.28])
+    with action_left:
+        chat_depth = st.slider("Memory depth", min_value=0, max_value=3, value=st.session_state["chat_depth"], step=1)
+    with action_right:
+        clear_chat = st.button("Clear chat history")
+
+    st.session_state["chat_depth"] = chat_depth
+
+    if clear_chat:
+        st.session_state["chat_messages"] = []
+        st.rerun()
+
+    chat_messages = st.session_state["chat_messages"]
+
+    if not chat_messages:
+        st.markdown(
+            """
+            <div class="chat-empty">
+                Ask a question and I’ll answer using the current memory graph plus any conversation memories that get written while we talk.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    for message in chat_messages:
+        role = message.get("role", "assistant")
+        content = message.get("content", "")
+        with st.chat_message(role):
+            st.markdown(content)
+            if role == "assistant":
+                meta = []
+                confidence = message.get("retrieval_confidence", {}) or {}
+                if confidence:
+                    meta.append(
+                        f"memory confidence: {confidence.get('label', 'unknown')} ({float(confidence.get('score', 0.0) or 0.0):.2f})"
+                    )
+                if message.get("memory_ingest_status"):
+                    meta.append(message["memory_ingest_status"])
+                if meta:
+                    st.caption(" | ".join(meta))
+
+    user_input = st.chat_input("Ask about your memories, decisions, projects, or anything you want the assistant to remember.")
+    if user_input:
+        prior_messages = list(st.session_state["chat_messages"])
+        st.session_state["chat_messages"].append({"role": "user", "content": user_input})
+        memory_agent = MemoryAgent()
+
+        with st.spinner("Retrieving memories..."):
+            raw_results = memory_agent.retrieve_memory_raw(user_input, depth=chat_depth)
+            memory_context = format_chat_memory_context(raw_results)
+
+        with st.spinner("Generating reply..."):
+            assistant_output = answer_chat_with_memory(
+                user_input,
+                memory_context,
+                prior_messages,
+                raw_results.get("retrieval_confidence", {}),
+            )
+
+        retrieval_confidence = raw_results.get("retrieval_confidence", {}) or {}
+        st.session_state["chat_messages"].append(
+            {
+                "role": "assistant",
+                "content": assistant_output,
+                "retrieval_confidence": retrieval_confidence,
+                "memory_ingest_status": "memory ingest queued in background",
+            }
+        )
+
+        queue_chat_memory_ingest(user_input, assistant_output, raw_results)
+        st.rerun()
+
+
 def render_reset_tab():
     st.markdown(
         """
@@ -1671,12 +1531,14 @@ def main():
     st.session_state.setdefault("ingest_running", False)
     render_top_hero()
 
-    ingest_tab, query_tab, reset_tab = st.tabs(["Ingest", "Query", "Reset"])
+    ingest_tab, query_tab, chat_tab, reset_tab = st.tabs(["Ingest", "Query", "Chat", "Reset"])
 
     with ingest_tab:
         render_ingest_tab()
     with query_tab:
         render_query_tab()
+    with chat_tab:
+        render_chat_tab()
     with reset_tab:
         render_reset_tab()
 

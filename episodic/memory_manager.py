@@ -14,6 +14,7 @@ from config import (
     EPISODIC_THRESHOLD,
     EPISODIC_MERGE_THRESHOLD,
     EPISODIC_TOP_K,
+    semantic_extraction_model,
 )
 
 
@@ -149,7 +150,7 @@ class EpisodicMemoryManager:
         """Use an LLM to rewrite the older memory with the new information."""
         start = time.perf_counter()
         response = self.openai_client.chat.completions.create(
-            model="gpt-4o",
+            model=semantic_extraction_model,
             response_format={"type": "json_object"},
             messages=[
                 {

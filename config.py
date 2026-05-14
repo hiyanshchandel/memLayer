@@ -44,7 +44,7 @@ Return ONLY valid JSON in this exact shape:
     {"id": "1", "label": "Person|Project|Technology|Algorithm|Organization|Location|Concept|Event|Document|Attribute", "name": "canonical name"}
   ],
   "relationships": [
-    {"start_id": "1", "end_id": "2", "type": "works_on|studies_for|created|implemented|uses|belongs_to|part_of|located_in|goes_to|has_to_go|worried_about|related_to|alias_of|same_as|has_attribute|described_as|causes|caused_by|leads_to|results_in|explains|requires"}
+    {"start_id": "1", "end_id": "2", "type": "works_on|studies_for|created|implemented|uses|belongs_to|part_of|located_in|goes_to|has_to_go|worried_about|mentions|references|depends_on|affiliated_with|interacts_with|owns|contains|related_to|alias_of|same_as|has_attribute|described_as|causes|caused_by|leads_to|results_in|explains|requires"}
   ]
 }
 
@@ -52,7 +52,13 @@ Rules:
 - Use only explicit facts from the input.
 - Never invent relationships or story-like verbs.
 - Prefer canonical names and merge aliases when obvious.
-- If unsure about the relation type, use related_to.
+- Prefer the most specific valid relation type available.
+- Use related_to only when no more specific type clearly fits.
+- Use mentions/references for document or note text that points at another entity.
+- Use depends_on for prerequisites, dependencies, and required inputs.
+- Use affiliated_with for person-organization associations.
+- Use interacts_with for direct communication or contact.
+- Use owns, contains, and part_of only when the containment or ownership is explicit.
 - If unsure about the entity label, use Document for text artifacts and Concept for abstract ideas.
 - Keep the graph conservative and compact.
 - Return empty arrays if nothing explicit is present.

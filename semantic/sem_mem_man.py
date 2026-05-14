@@ -49,6 +49,13 @@ CANONICAL_RELATION_TYPES = {
     "goes_to",
     "has_to_go",
     "worried_about",
+    "mentions",
+    "references",
+    "depends_on",
+    "affiliated_with",
+    "interacts_with",
+    "owns",
+    "contains",
     "related_to",
     "alias_of",
     "same_as",
@@ -81,20 +88,25 @@ RELATION_ALIASES = {
     "same_as": "same_as",
     "equals": "same_as",
     "equal_to": "same_as",
-    "talked_to": "related_to",
-    "spoke_to": "related_to",
-    "speaks_to": "related_to",
-    "communicates_with": "related_to",
-    "communicated_with": "related_to",
-    "met": "related_to",
-    "seen_with": "related_to",
-    "mentioned": "related_to",
-    "informed": "related_to",
-    "called": "related_to",
-    "asked": "related_to",
-    "questioned": "related_to",
-    "visited": "related_to",
-    "visits": "related_to",
+    "talked_to": "interacts_with",
+    "spoke_to": "interacts_with",
+    "speaks_to": "interacts_with",
+    "communicates_with": "interacts_with",
+    "communicated_with": "interacts_with",
+    "met": "interacts_with",
+    "seen_with": "interacts_with",
+    "mentioned": "references",
+    "mention": "references",
+    "mentions": "references",
+    "referenced": "references",
+    "references": "references",
+    "refers_to": "references",
+    "informed": "references",
+    "called": "interacts_with",
+    "asked": "interacts_with",
+    "questioned": "interacts_with",
+    "visited": "interacts_with",
+    "visits": "interacts_with",
     "follows": "related_to",
     "follows_from": "related_to",
     "has_child": "related_to",
@@ -102,13 +114,19 @@ RELATION_ALIASES = {
     "parent_of": "related_to",
     "sister_of": "related_to",
     "brother_of": "related_to",
-    "owns": "related_to",
-    "contains": "related_to",
-    "includes": "related_to",
+    "owns": "owns",
+    "contains": "contains",
+    "includes": "contains",
     "included_in": "part_of",
     "belonging_to": "belongs_to",
     "is_part_of": "part_of",
     "goes": "goes_to",
+    "depends_on": "depends_on",
+    "depends": "depends_on",
+    "relies_on": "depends_on",
+    "affiliated_with": "affiliated_with",
+    "employed_by": "affiliated_with",
+    "works_for": "affiliated_with",
 }
 
 QUERY_STOPWORDS = {
@@ -162,6 +180,37 @@ class GraphMemoryManager:
             })
 
         return variants
+
+    def _score_query_name_match(self, node_name, query_variant, match_type):
+        node_key = self._normalize_name_key(node_name)
+        variant_key = query_variant.get("normalized", "")
+        node_tokens = {token for token in re.findall(r"[a-z0-9']+", self._strip_honorifics(node_name).lower()) if token}
+        variant_tokens = set(query_variant.get("tokens", []))
+
+        token_overlap = len(node_tokens & variant_tokens)
+        token_union = len(node_tokens | variant_tokens) or 1
+        overlap_score = token_overlap / token_union
+
+        containment_score = 0.0
+        if node_key and variant_key and (node_key == variant_key):
+            containment_score = 1.0
+        elif node_key and variant_key and (node_key in variant_key or variant_key in node_key):
+            containment_score = 0.9
+
+        score = max(overlap_score, containment_score)
+        if match_type == "exact":
+            score = max(score, 1.0)
+
+        return round(min(score, 1.0), 3)
+
+    def _relationship_key(self, relationship):
+        return (
+            relationship.get("source"),
+            relationship.get("type"),
+            relationship.get("target"),
+            relationship.get("related_node"),
+            relationship.get("direction"),
+        )
 
     def _extract_query_name_candidates(self, query):
         if not query:
@@ -279,6 +328,54 @@ class GraphMemoryManager:
 
         return "related_to"
 
+    def _refine_relation_type(self, start_entity, end_entity, relation_type):
+        normalized_type = self._normalize_relation_type(relation_type)
+        if normalized_type != "related_to":
+            return normalized_type
+
+        start_label = start_entity.get("label")
+        end_label = end_entity.get("label")
+        start_name = self._normalize_name_key(start_entity.get("name"))
+        end_name = self._normalize_name_key(end_entity.get("name"))
+
+        if start_name and start_name == end_name:
+            return "same_as"
+
+        if start_label == "Document" and end_label != "Document":
+            return "mentions"
+
+        if end_label == "Document" and start_label != "Document":
+            return "references"
+
+        if start_label == "Person" and end_label == "Project":
+            return "works_on"
+
+        if start_label == "Person" and end_label == "Technology":
+            return "uses"
+
+        if start_label == "Person" and end_label == "Organization":
+            return "affiliated_with"
+
+        if start_label == "Project" and end_label == "Technology":
+            return "uses"
+
+        if start_label == "Project" and end_label == "Document":
+            return "references"
+
+        if start_label == "Organization" and end_label == "Person":
+            return "affiliated_with"
+
+        if start_label == "Organization" and end_label == "Project":
+            return "part_of"
+
+        if start_label == "Person" and end_label == "Person":
+            return "interacts_with"
+
+        if start_label == "Organization" and end_label == "Organization":
+            return "part_of"
+
+        return normalized_type
+
     def _normalize_extracted_data(self, data, known_entities=None):
         normalized_entities = []
         id_map = {}
@@ -313,7 +410,9 @@ class GraphMemoryManager:
         for relationship in data.get("relationships", []):
             start_id = str(relationship.get("start_id", "")).strip()
             end_id = str(relationship.get("end_id", "")).strip()
-            relation_type = self._normalize_relation_type(relationship.get("type"))
+            start_entity = id_map.get(start_id)
+            end_entity = id_map.get(end_id)
+            relation_type = self._refine_relation_type(start_entity or {}, end_entity or {}, relationship.get("type"))
 
             if not start_id or not end_id or not relation_type:
                 continue
@@ -410,6 +509,7 @@ class GraphMemoryManager:
                 OPTIONAL MATCH (n)-[r]-(m)
                 RETURN
                     n AS node,
+                    entity_name AS matched_query,
                     collect(DISTINCT {
                         type: type(r),
                         direction: CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END,
@@ -434,6 +534,7 @@ class GraphMemoryManager:
                 OPTIONAL MATCH (n)-[r]-(m)
                 RETURN
                     n AS node,
+                    query_variant.raw AS matched_query,
                     collect(DISTINCT {
                         type: type(r),
                         direction: CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END,
@@ -453,11 +554,12 @@ class GraphMemoryManager:
                 }
 
             entities = []
-            relationships = []
+            relationships = {}
             memory_ids = set()
             seen_entity_keys = set()
+            query_variant_lookup = {variant.get("raw"): variant for variant in query_variants}
 
-            def add_records(result):
+            def add_records(result, match_type):
                 for record in result:
                     node = record["node"]
                     node_name = node.get("name")
@@ -469,6 +571,21 @@ class GraphMemoryManager:
 
                     node_data = dict(node)
                     node_data["labels"] = list(node.labels)
+                    node_data["match_type"] = match_type
+                    matched_query = record.get("matched_query")
+                    node_data["matched_query"] = matched_query
+                    query_variant = query_variant_lookup.get(matched_query, {
+                        "normalized": self._normalize_name_key(matched_query),
+                        "tokens": [token for token in re.findall(r"[a-z0-9']+", str(matched_query).lower()) if token],
+                    })
+                    relationship_count = len(record.get("relationships", []))
+                    node_data["score"] = self._score_query_name_match(
+                        node_name,
+                        query_variant,
+                        match_type,
+                    )
+                    if relationship_count:
+                        node_data["score"] = round(min(1.0, node_data["score"] + min(0.1, relationship_count / 50.0)), 3)
                     entities.append(node_data)
 
                     node_memory_id = node.get("memory_id")
@@ -482,14 +599,42 @@ class GraphMemoryManager:
 
                     for relationship in record["relationships"]:
                         if relationship and relationship.get("type"):
-                            relationships.append(relationship)
+                            relationship_data = dict(relationship)
+                            relationship_data["match_type"] = match_type
+                            relationship_data["matched_query"] = record.get("matched_query")
+                            relationship_data["score"] = node_data["score"]
+                            relationship_key = self._relationship_key(relationship_data)
+                            existing_relationship = relationships.get(relationship_key)
+                            if existing_relationship is None or relationship_data["score"] > existing_relationship.get("score", 0.0):
+                                relationships[relationship_key] = relationship_data
 
-            add_records(exact_result)
-            add_records(fuzzy_result)
+            add_records(exact_result, "exact")
+            add_records(fuzzy_result, "fuzzy")
+
+            entities.sort(
+                key=lambda item: (
+                    float(item.get("score", 0.0) or 0.0),
+                    1 if item.get("match_type") == "exact" else 0,
+                    item.get("name", "").lower(),
+                ),
+                reverse=True,
+            )
+
+            ranked_relationships = sorted(
+                relationships.values(),
+                key=lambda item: (
+                    float(item.get("score", 0.0) or 0.0),
+                    1 if item.get("match_type") == "exact" else 0,
+                    item.get("source", "") or "",
+                    item.get("type", "") or "",
+                    item.get("target", "") or "",
+                ),
+                reverse=True,
+            )
 
             return {
                 "entities": entities,
-                "relationships": relationships,
+                "relationships": ranked_relationships,
                 "memory_ids": list(memory_ids),
             }
 
