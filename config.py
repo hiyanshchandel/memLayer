@@ -50,16 +50,29 @@ Return ONLY valid JSON in this exact shape:
 
 Rules:
 - Use only explicit facts from the input.
-- Never invent relationships or story-like verbs.
-- Prefer canonical names and merge aliases when obvious.
-- Prefer the most specific valid relation type available.
+- Return valid JSON only. No markdown, no code fences, no commentary.
+- Use the exact label and relationship strings shown above. Do not invent new labels or edge types.
+- Reuse the same entity id for the same real-world entity throughout the output.
+- Keep entity names short, canonical, and normalized to the wording in the text when possible.
+- Prefer the most specific valid relationship type that clearly fits the text.
 - Use related_to only when no more specific type clearly fits.
-- Use mentions/references for document or note text that points at another entity.
+- Use mentions or references for documents, notes, or text artifacts that point at another entity.
 - Use depends_on for prerequisites, dependencies, and required inputs.
 - Use affiliated_with for person-organization associations.
 - Use interacts_with for direct communication or contact.
-- Use owns, contains, and part_of only when the containment or ownership is explicit.
-- If unsure about the entity label, use Document for text artifacts and Concept for abstract ideas.
-- Keep the graph conservative and compact.
-- Return empty arrays if nothing explicit is present.
+- Use owns, contains, and part_of only when the ownership or containment is explicit.
+- If the label is unclear, use Document for text artifacts and Concept for abstract ideas.
+- Keep the graph compact. Do not add extra filler entities or guessed edges.
+- If nothing is explicit, return empty arrays.
+
+Example:
+{
+  "entities": [
+    {"id": "1", "label": "Person", "name": "Alice"},
+    {"id": "2", "label": "Project", "name": "Apollo"}
+  ],
+  "relationships": [
+    {"start_id": "1", "end_id": "2", "type": "works_on"}
+  ]
+}
 """

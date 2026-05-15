@@ -239,6 +239,32 @@ def inject_styles() -> None:
             gap: 1rem;
         }
 
+        .query-box {
+            background: #f8fafc !important;
+            border-color: #d4d4d8 !important;
+        }
+
+        .query-output {
+            margin-top: 0.5rem;
+            padding: 0.9rem 1rem;
+            border-radius: 10px;
+            background: #f8fafc !important;
+            border: 1px solid #d4d4d8;
+            color: #111827 !important;
+            font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.92rem;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-x: auto;
+        }
+
+        .query-output pre {
+            margin: 0;
+            color: #111827 !important;
+            -webkit-text-fill-color: #111827 !important;
+        }
+
         .chat-shell {
             background: var(--card-bg) !important;
             border: 1px solid var(--border) !important;
@@ -1345,12 +1371,9 @@ def render_query_tab():
                 """,
                 unsafe_allow_html=True,
             )
-            st.text_area(
-                "Retrieved memory",
-                value=query_output,
-                height=260,
-                disabled=True,
-                label_visibility="collapsed",
+            st.markdown(
+                f"<div class='query-output'><pre>{html.escape(query_output)}</pre></div>",
+                unsafe_allow_html=True,
             )
             st.markdown(
                 """
@@ -1360,12 +1383,9 @@ def render_query_tab():
                 """,
                 unsafe_allow_html=True,
             )
-            st.text_area(
-                "LLM answer",
-                value=answer_output,
-                height=260,
-                disabled=True,
-                label_visibility="collapsed",
+            st.markdown(
+                f"<div class='query-output'><pre>{html.escape(answer_output)}</pre></div>",
+                unsafe_allow_html=True,
             )
             st.markdown("""
                     </div>

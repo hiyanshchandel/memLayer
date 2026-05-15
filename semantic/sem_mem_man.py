@@ -1,133 +1,10 @@
-from clients.vector_client import vec_client
-import sqlite3
 import json
 from memory_blob.definition import MemoryBlob
-from config import  GRAPH_CONTEXT_ENTITY_LIMIT, GRAPH_PUSH_MAX_RETRIES, GRAPH_PUSH_RETRY_BASE_SECONDS, SEMANTIC_COLLECTION_NAME, SEMANTIC_MEMORY_DB, SEMANTIC_THRESHOLD, SEMANTIC_TOP_K, neo4j_extraction_prompt, semantic_extraction_model
+from config import GRAPH_CONTEXT_ENTITY_LIMIT, GRAPH_PUSH_MAX_RETRIES, GRAPH_PUSH_RETRY_BASE_SECONDS, neo4j_extraction_prompt, semantic_extraction_model
 from clients.graphdb_client import graphdb_client
 from clients.openai_client import openai_client
 import re
 import time
-
-
-CANONICAL_LABELS = {
-    "Person",
-    "Project",
-    "Technology",
-    "Algorithm",
-    "Organization",
-    "Location",
-    "Concept",
-    "Event",
-    "Document",
-    "Attribute",
-}
-
-LABEL_ALIASES = {
-    "Book": "Document",
-    "Article": "Document",
-    "Chapter": "Document",
-    "Story": "Document",
-    "Letter": "Document",
-    "Note": "Document",
-    "List": "Document",
-    "Parchment": "Document",
-    "Envelope": "Document",
-    "Text": "Document",
-    "Animal": "Concept",
-    "Food": "Concept",
-}
-
-CANONICAL_RELATION_TYPES = {
-    "works_on",
-    "studies_for",
-    "created",
-    "implemented",
-    "uses",
-    "belongs_to",
-    "part_of",
-    "located_in",
-    "goes_to",
-    "has_to_go",
-    "worried_about",
-    "mentions",
-    "references",
-    "depends_on",
-    "affiliated_with",
-    "interacts_with",
-    "owns",
-    "contains",
-    "related_to",
-    "alias_of",
-    "same_as",
-    "has_attribute",
-    "described_as",
-    "causes",
-    "caused_by",
-    "leads_to",
-    "results_in",
-    "explains",
-    "requires",
-}
-
-RELATION_ALIASES = {
-    "written_by": "created",
-    "authored_by": "created",
-    "made_by": "created",
-    "made": "created",
-    "used": "uses",
-    "use": "uses",
-    "is": "has_attribute",
-    "are": "has_attribute",
-    "has": "has_attribute",
-    "have": "has_attribute",
-    "describes": "described_as",
-    "described": "described_as",
-    "looks_like": "described_as",
-    "looks": "described_as",
-    "looks_as": "described_as",
-    "same_as": "same_as",
-    "equals": "same_as",
-    "equal_to": "same_as",
-    "talked_to": "interacts_with",
-    "spoke_to": "interacts_with",
-    "speaks_to": "interacts_with",
-    "communicates_with": "interacts_with",
-    "communicated_with": "interacts_with",
-    "met": "interacts_with",
-    "seen_with": "interacts_with",
-    "mentioned": "references",
-    "mention": "references",
-    "mentions": "references",
-    "referenced": "references",
-    "references": "references",
-    "refers_to": "references",
-    "informed": "references",
-    "called": "interacts_with",
-    "asked": "interacts_with",
-    "questioned": "interacts_with",
-    "visited": "interacts_with",
-    "visits": "interacts_with",
-    "follows": "related_to",
-    "follows_from": "related_to",
-    "has_child": "related_to",
-    "child_of": "related_to",
-    "parent_of": "related_to",
-    "sister_of": "related_to",
-    "brother_of": "related_to",
-    "owns": "owns",
-    "contains": "contains",
-    "includes": "contains",
-    "included_in": "part_of",
-    "belonging_to": "belongs_to",
-    "is_part_of": "part_of",
-    "goes": "goes_to",
-    "depends_on": "depends_on",
-    "depends": "depends_on",
-    "relies_on": "depends_on",
-    "affiliated_with": "affiliated_with",
-    "employed_by": "affiliated_with",
-    "works_for": "affiliated_with",
-}
 
 QUERY_STOPWORDS = {
     "a", "an", "and", "are", "around", "as", "ask", "asked", "asking", "at", "be", "did", "do",
@@ -306,85 +183,15 @@ class GraphMemoryManager:
 
         return cleaned_name
 
-    def _normalize_label(self, label):
-        if not label:
-            return None
-
-        canonical_label = LABEL_ALIASES.get(label, label)
-        if canonical_label in CANONICAL_LABELS:
-            return canonical_label
-
-        return None
-
-    def _normalize_relation_type(self, relation_type):
-        if not relation_type:
-            return None
-
-        normalized_type = str(relation_type).strip().lower().replace("-", "_").replace(" ", "_")
-        normalized_type = RELATION_ALIASES.get(normalized_type, normalized_type)
-
-        if normalized_type in CANONICAL_RELATION_TYPES:
-            return normalized_type
-
-        return "related_to"
-
-    def _refine_relation_type(self, start_entity, end_entity, relation_type):
-        normalized_type = self._normalize_relation_type(relation_type)
-        if normalized_type != "related_to":
-            return normalized_type
-
-        start_label = start_entity.get("label")
-        end_label = end_entity.get("label")
-        start_name = self._normalize_name_key(start_entity.get("name"))
-        end_name = self._normalize_name_key(end_entity.get("name"))
-
-        if start_name and start_name == end_name:
-            return "same_as"
-
-        if start_label == "Document" and end_label != "Document":
-            return "mentions"
-
-        if end_label == "Document" and start_label != "Document":
-            return "references"
-
-        if start_label == "Person" and end_label == "Project":
-            return "works_on"
-
-        if start_label == "Person" and end_label == "Technology":
-            return "uses"
-
-        if start_label == "Person" and end_label == "Organization":
-            return "affiliated_with"
-
-        if start_label == "Project" and end_label == "Technology":
-            return "uses"
-
-        if start_label == "Project" and end_label == "Document":
-            return "references"
-
-        if start_label == "Organization" and end_label == "Person":
-            return "affiliated_with"
-
-        if start_label == "Organization" and end_label == "Project":
-            return "part_of"
-
-        if start_label == "Person" and end_label == "Person":
-            return "interacts_with"
-
-        if start_label == "Organization" and end_label == "Organization":
-            return "part_of"
-
-        return normalized_type
-
-    def _normalize_extracted_data(self, data, known_entities=None):
+    def _normalize_extracted_data(self, data):
         normalized_entities = []
         id_map = {}
         seen_entity_names = {}
 
         for entity in data.get("entities", []):
             entity_id = str(entity.get("id", "")).strip()
-            entity_label = self._normalize_label(entity.get("label"))
-            entity_name = self._canonicalize_name(str(entity.get("name", "")).strip(), known_entities=known_entities)
+            entity_label = str(entity.get("label", "")).strip()
+            entity_name = str(entity.get("name", "")).strip()
 
             if not entity_id or not entity_label or not entity_name:
                 continue
@@ -410,9 +217,7 @@ class GraphMemoryManager:
         for relationship in data.get("relationships", []):
             start_id = str(relationship.get("start_id", "")).strip()
             end_id = str(relationship.get("end_id", "")).strip()
-            start_entity = id_map.get(start_id)
-            end_entity = id_map.get(end_id)
-            relation_type = self._refine_relation_type(start_entity or {}, end_entity or {}, relationship.get("type"))
+            relation_type = str(relationship.get("type", "")).strip()
 
             if not start_id or not end_id or not relation_type:
                 continue
@@ -457,7 +262,7 @@ class GraphMemoryManager:
                 ans = response.choices[0].message.content
                 clean_json_str = re.sub(r"^```json\s*|\s*```$", "", ans.strip())
                 data = json.loads(clean_json_str)
-                data = self._normalize_extracted_data(data, known_entities=known_entities)
+                data = self._normalize_extracted_data(data)
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 print(f"[Timing] graph_llm_extract_ms={elapsed_ms:.1f}")
                 return data
